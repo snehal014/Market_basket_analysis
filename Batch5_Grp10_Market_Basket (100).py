@@ -656,10 +656,10 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, year, month, dayofweek, dayofmonth, hour
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DateType, TimestampType
 
-# ✅ Initialize Spark Session
+#  Initialize Spark Session
 spark = SparkSession.builder.appName("RealTimePromotion").getOrCreate()
 
-# ✅ Define Schema (Including Timestamp for Time-Based Offers)
+#  Define Schema (Including Timestamp for Time-Based Offers)
 schema = StructType([
     StructField("Member_number", IntegerType(), True),
     StructField("Date", DateType(), True),  # Purchase date
@@ -671,7 +671,7 @@ schema = StructType([
 ])
 
 
-# ✅ Read Streaming Data
+#  Read Streaming Data
 naya_df = spark.readStream.format("csv") \
     .option("header", "true") \
     .schema(schema) \
@@ -691,7 +691,7 @@ naya_df = naya_df.withColumn("year", year(col("Date"))) \
 
 # COMMAND ----------
 
-# ✅ Apply Promotions Based on Day, Month, Time & Weekday
+#  Apply Promotions Based on Day, Month, Time & Weekday
 promotions_df = naya_df.withColumn("promotion",
     when(col("day") == 1, "1st Day Special: 5% Off")  # Special discount on 1st of the month
     .when(col("month") == 12, "15% Christmas Discount")  # Christmas Offer
@@ -717,208 +717,3 @@ promotions_df = naya_df.withColumn("promotion",
 # COMMAND ----------
 
 display(promotions_df)
-
-# COMMAND ----------
-
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, count, month, year, dayofweek, lit
-
-# ✅ Initialize Spark Session
-spark = SparkSession.builder.appName("MarketBasketPromotions").getOrCreate()
-
-# ✅ Load Data (Replace with Your Data Location)
-df = spark.read.format("csv").option("header", "true").load("/FileStore/tables/Groceries_data.csv")
-
-# ✅ Convert Date Column to Proper Format
-df = df.withColumn("year", year(col("Date"))) \
-       .withColumn("month", month(col("Date"))) \
-       .withColumn("day_of_week", dayofweek(col("Date")))
-
-# ✅ Identify Bulk Purchases (More than 5 items per transaction)
-basket_size_df = df.groupBy("Member_number", "Date").count()
-
-# ✅ Add Bulk Purchase Promotion
-basket_size_df = basket_size_df.withColumn("promotion",
-    when(col("count") > 5, "Bulk Purchase Discount: 15% Off").otherwise("No Discount")
-)
-
-# ✅ Combo Deal: Identify Frequently Bought Together Items
-from pyspark.sql.functions import collect_set
-basket_items = df.groupBy("Member_number", "Date").agg(collect_set("itemDescription").alias("items"))
-
-# Example: If "Milk" & "Bread" appear in the same basket, offer a Combo Deal
-basket_items = basket_items.withColumn("promotion",
-    when(col("items").contains("Milk") & col("items").contains("Bread"), "Combo Offer: Buy 1 Get 1 Free")
-)
-
-# ✅ Loyalty Bonus: Identify Frequent Shoppers (10+ purchases in 3 months)
-loyal_customers = df.groupBy("Member_number").count().filter(col("count") >= 10)
-df = df.join(loyal_customers, "Member_number", "left_outer") \
-       .withColumn("promotion", when(col("count") >= 10, "Loyalty Bonus: Extra 10% Off"))
-
-# ✅ Display Promotions
-display(df)
-
-
-# COMMAND ----------
-
-from pyspark.sql.functions import col, array_contains, when, collect_set
-
-# Group transactions by customer and date, collecting items into an array
-basket_items = df.groupBy("Member_number", "Date").agg(collect_set("itemDescription").alias("items"))
-
-# Apply promotion when a customer buys both "Milk" and "Bread"
-basket_items = basket_items.withColumn("promotion",
-    when(array_contains(col("items"), "Milk") & array_contains(col("items"), "Bread"), 
-         "Combo Offer: Buy 1 Get 1 Free")
-    .otherwise("No Discount")
-)
-
-# ✅ Display the results
-display(basket_items)
-
-
-# COMMAND ----------
-
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, collect_set, when, array_contains, year, month, dayofweek, dayofmonth
-from pyspark.ml.fpm import FPGrowth
-
-# ✅ Initialize Spark Session
-spark = SparkSession.builder.appName("RealTime_Promotion_FPGrowth").getOrCreate()
-
-# ✅ Define Streaming Data Schema
-schema = StructType([
-    StructField("Member_number", IntegerType(), True),
-    StructField("Date", DateType(), True),
-    StructField("itemDescription", StringType(), True)
-])
-
-# ✅ Read Real-Time Streaming Data (Simulating Transactional Data)
-naya_df = (spark.readStream
-           .format("csv")
-           .option("header", "true")
-           .schema(schema)
-           .load("/FileStore/tables/stream_read/"))
-
-# ✅ Extract Time Features
-naya_df = (naya_df.withColumn("year", year(col("Date")))
-                  .withColumn("month", month(col("Date")))
-                  .withColumn("day", dayofmonth(col("Date")))
-                  .withColumn("day_of_week", dayofweek(col("Date"))))
-
-# ✅ Apply Time-Based Promotions
-naya_df = naya_df.withColumn("promotion",
-    when(col("day") == 1, "1st Day Special: 5% Off")
-    .when(col("month") == 12, "15% Christmas Discount")
-    .when(col("month") == 11, "Black Friday Deal: 30% Off")
-    .when(col("day_of_week").isin([6, 7]), "Weekend Discount: 20% Off")
-    .when(col("day_of_week") == 2, "Tuesday Special: 5% Off")
-    .otherwise("No Special Discount"))
-
-# ✅ Perform Market Basket Analysis (FP-Growth)
-basket_items = naya_df.groupBy("Member_number", "Date").agg(collect_set("itemDescription").alias("items"))
-
-
-# ✅ Apply Promotions Based on FP-Growth Rules
-promotions_df = basket_items.withColumn("promotion",
-    when(array_contains(col("items"), "Milk") & array_contains(col("items"), "Bread"), 
-         "Combo Offer: Buy 1 Get 1 Free")
-    .when(array_contains(col("items"), "Eggs") & array_contains(col("items"), "Butter"),
-         "Breakfast Combo: 10% Off")
-    .when(array_contains(col("items"), "Tea") & array_contains(col("items"), "Cookies"),
-         "Tea-Time Special: 5% Off")
-    .otherwise("No Special Discount"))
-
-# ✅ Merge Time-Based & FP-Growth Promotions
-final_promotion_df = promotions_df.join(naya_df, ["Member_number", "Date"], "left") \
-                                  .select("Member_number", "Date", "items", "promotion")
-
-# ✅ Write Streaming Output
-(final_promotion_df.writeStream
-    .format("delta")
-    .outputMode("append")
-    .option("mergeSchema", "true")
-    .option("checkpointLocation", "/FileStore/tables/stream_checkpoint")
-    .start("/FileStore/tables/stream_output"))
-
-# ✅ Display Results in Databricks
-display(final_promotion_df)
-
-
-# COMMAND ----------
-
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, collect_set, when, array_contains, year, month, dayofweek, dayofmonth
-from pyspark.ml.fpm import FPGrowth
-
-# ✅ Initialize Spark Session
-spark = SparkSession.builder.appName("RealTime_Promotion_FPGrowth").getOrCreate()
-
-# ✅ Define Streaming Data Schema
-schema = StructType([
-    StructField("Member_number", IntegerType(), True),
-    StructField("Date", DateType(), True),
-    StructField("itemDescription", StringType(), True)
-])
-
-# ✅ Read Real-Time Streaming Data (Simulating Transactional Data)
-naya_df = (spark.readStream
-           .format("csv")
-           .option("header", "true")
-           .schema(schema)
-           .load("/FileStore/tables/stream_read/"))
-
-# ✅ Extract Time Features
-naya_df = (naya_df.withColumn("year", year(col("Date")))
-                  .withColumn("month", month(col("Date")))
-                  .withColumn("day", dayofmonth(col("Date")))
-                  .withColumn("day_of_week", dayofweek(col("Date"))))
-
-# ✅ Apply Time-Based Promotions
-naya_df = naya_df.withColumn("promotion",
-    when(col("day") == 1, "1st Day Special: 5% Off")
-    .when(col("month") == 12, "15% Christmas Discount")
-    .when(col("month") == 11, "Black Friday Deal: 30% Off")
-    .when(col("day_of_week").isin([6, 7]), "Weekend Discount: 20% Off")
-    .when(col("day_of_week") == 2, "Tuesday Special: 5% Off")
-    .otherwise("No Special Discount"))
-
-# ✅ Perform Market Basket Analysis (FP-Growth)
-basket_items = naya_df.groupBy("Member_number", "Date").agg(collect_set("itemDescription").alias("items"))
-
-# ✅ Apply FP-Growth Model for Association Rule Mining
-fp_growth = FPGrowth(itemsCol="items", minSupport=0.003, minConfidence=0.05)
-model = fp_growth.fit(basket_items)
-
-# ✅ Extract Association Rules
-rules = model.associationRules
-
-# ✅ Apply Promotions Based on FP-Growth Rules
-promotions_df = basket_items.withColumn("promotion",
-    when(array_contains(col("items"), "Milk") & array_contains(col("items"), "Bread"), 
-         "Combo Offer: Buy 1 Get 1 Free")
-    .when(array_contains(col("items"), "Eggs") & array_contains(col("items"), "Butter"),
-         "Breakfast Combo: 10% Off")
-    .when(array_contains(col("items"), "Tea") & array_contains(col("items"), "Cookies"),
-         "Tea-Time Special: 5% Off")
-    .otherwise("No Special Discount"))
-
-# ✅ Merge Time-Based & FP-Growth Promotions
-final_promotion_df = promotions_df.join(naya_df, ["Member_number", "Date"], "left") \
-                                  .select("Member_number", "Date", "items", "promotion")
-
-# ✅ Write Streaming Output
-(final_promotion_df.writeStream
-    .format("delta")
-    .outputMode("append")
-    .option("mergeSchema", "true")
-    .option("checkpointLocation", "/FileStore/tables/stream_checkpoint")
-    .start("/FileStore/tables/stream_output"))
-
-# ✅ Display Results in Databricks
-display(final_promotion_df)
-
-
-# COMMAND ----------
-
